@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="hi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2a1730">
+<title>Pyaari</title>
+<link href="https://fonts.googleapis.com/css2?family=Hind:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#2a1730;--bg2:#3a2040;--rose:#f4a9b8;--apricot:#ffc98b;--ink:#fff3f0;--mute:#c9a9bd;--line:#52335a}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:radial-gradient(120% 70% at 50% 0%,var(--bg2),var(--bg));color:var(--ink);font:16px/1.5 Hind,system-ui,sans-serif;
+ display:flex;flex-direction:column;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+header{display:flex;flex-direction:column;align-items:center;padding:18px 16px 8px}
+#orb{width:84px;height:84px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff1e6,var(--rose) 45%,#c76a8a);
+ box-shadow:0 0 40px #f4a9b855;animation:breathe 4s ease-in-out infinite;transition:transform .2s}
+#orb.listen{animation:pulse .8s ease-in-out infinite;box-shadow:0 0 60px #ffc98b99}
+#orb.speak{animation:pulse 1.2s ease-in-out infinite}
+#orb.off{animation:none;filter:grayscale(.8) brightness(.6);box-shadow:none}
+@keyframes breathe{50%{transform:scale(1.05)}}
+@keyframes pulse{50%{transform:scale(1.14)}}
+@media (prefers-reduced-motion:reduce){#orb{animation:none!important}}
+h1{font-size:22px;font-weight:600;margin:10px 0 0}
+#st{font-size:13px;color:var(--mute)}
+#log{flex:1;overflow-y:auto;padding:8px 14px;display:flex;flex-direction:column;gap:8px}
+.b{max-width:84%;padding:9px 13px;border-radius:18px;white-space:pre-wrap;word-break:break-word}
+.p{align-self:flex-start;background:var(--bg2);border:1px solid var(--line);border-bottom-left-radius:6px}
+.u{align-self:flex-end;background:var(--rose);color:#3a1a2a;border-bottom-right-radius:6px}
+#bar{display:flex;gap:8px;align-items:center;padding:10px 12px 12px;border-top:1px solid var(--line)}
+#txt{flex:1;min-width:0;background:var(--bg2);border:1px solid var(--line);border-radius:22px;color:var(--ink);padding:11px 16px;font:inherit}
+#txt:focus,button:focus-visible{outline:2px solid var(--apricot);outline-offset:2px}
+button{border:0;cursor:pointer;font:inherit}
+#mic{width:54px;height:54px;border-radius:50%;background:var(--apricot);color:#3a1a2a;font-size:22px;flex:none}
+#mic.on{background:var(--rose);box-shadow:0 0 0 6px #f4a9b840}
+#send{background:none;color:var(--rose);font-weight:600;padding:8px}
+#lg{position:fixed;inset:0;background:var(--bg);display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:24px}
+#lg input{width:100%;max-width:300px;background:var(--bg2);border:1px solid var(--line);border-radius:14px;color:var(--ink);padding:12px 16px;font:inherit}
+#lg button{background:var(--apricot);color:#3a1a2a;border-radius:14px;padding:12px 28px;font-weight:600}
+#er{color:#ff9aa8;min-height:22px;font-size:14px}
+</style>
+</head>
+<body>
+<header><div id="orb"></div><h1>Pyaari</h1><div id="st">bol, main sun rahi hoon</div></header>
+<div id="log" aria-live="polite"></div>
+<div id="bar">
+  <button id="mic" aria-label="Bolne ke liye dabao">&#127908;</button>
+  <input id="txt" placeholder="Ya yahan likh..." autocomplete="off">
+  <button id="send">Bhejo</button>
+</div>
+<div id="lg">
+  <h1>Pyaari</h1>
+  <input id="pw" type="password" placeholder="Password" autocomplete="current-password">
+  <div id="er"></div>
+  <button id="go">Andar aao</button>
+</div>
+<script>
+var $=function(i){return document.getElementById(i)};
+var hist=[], off=false, rec=null, listening=false, peak=0, audioCtx=null, an=null, stream=null;
+var LOUD=0.22;
+
+function bubble(who,t){var d=document.createElement('div');d.className='b '+who;d.textContent=t;$('log').appendChild(d);$('log').scrollTop=1e9;}
+function state(c,t){$('orb').className=c||'';$('st').textContent=t;}
+function showLogin(){$('lg').style.display='flex';}
+
+async function post(p,b){
+  var r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+  if(r.status===401&&p!=='/login'){showLogin();throw new Error('login');}
+  return r;
+}
+
+async function speak(t){
+  state('speak','bol rahi hai...');
+  try{
+    var r=await post('/tts',{text:t}); if(!r.ok) throw 0;
+    var a=new Audio(URL.createObjectURL(await r.blob()));
+    await new Promise(function(ok,no){a.onended=ok;a.onerror=no;a.play().catch(no);});
+  }catch(e){
+    if(window.speechSynthesis){var u=new SpeechSynthesisUtterance(t);u.lang='hi-IN';
+      await new Promise(function(ok){u.onend=ok;u.onerror=ok;speechSynthesis.speak(u);});}
+  }
+  state(off?'off':'',off?'so rahi hai. Mic dabao jagane ke liye':'bol, main sun rahi hoon');
+}
+
+async function send(text,loud){
+  text=(text||'').trim(); if(!text) return;
+  off=false; bubble('u',text); $('txt').value='';
+  state('','soch rahi hai...');
+  try{
+    var r=await post('/chat',{text:text,loud:!!loud,history:hist});
+    var d=await r.json();
+    hist.push({role:'user',content:text},{role:'assistant',content:d.reply||''});
+    bubble('p',d.reply||'...');
+    if(d.action&&d.action.type==='quit') off=true;
+    await speak(d.reply||'');
+  }catch(e){ if(e.message!=='login') state('','kuch gadbad hui, dobara try kar'); }
+}
+
+async function startMeter(){
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({audio:true});
+    audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+    an=audioCtx.createAnalyser(); an.fftSize=1024;
+    audioCtx.createMediaStreamSource(stream).connect(an);
+    var buf=new Float32Array(an.fftSize);
+    (function tick(){ if(!an) return;
+      an.getFloatTimeDomainData(buf); var s=0;
+      for(var i=0;i<buf.length;i++) s+=buf[i]*buf[i];
+      peak=Math.max(peak,Math.sqrt(s/buf.length)); requestAnimationFrame(tick);})();
+  }catch(e){ an=null; }
+}
+function stopMeter(){ an=null; if(stream) stream.getTracks().forEach(function(t){t.stop();}); if(audioCtx) audioCtx.close(); }
+
+$('mic').onclick=async function(){
+  var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){state('','Is browser mein mic nahi chalta. Chrome use kar ya likh ke bhej.');return;}
+  if(listening){rec.stop();return;}
+  peak=0; await startMeter();
+  rec=new SR(); rec.lang='hi-IN'; rec.interimResults=false;
+  rec.onstart=function(){listening=true;$('mic').classList.add('on');state('listen','sun rahi hoon...');};
+  rec.onend=function(){listening=false;$('mic').classList.remove('on');stopMeter();};
+  rec.onerror=function(){state('','sun nahi paayi, dobara bol');};
+  rec.onresult=function(e){send(e.results[0][0].transcript, peak>LOUD);};
+  rec.start();
+};
+$('send').onclick=function(){send($('txt').value,false);};
+$('txt').onkeydown=function(e){if(e.key==='Enter')send($('txt').value,false);};
+
+$('go').onclick=async function(){
+  var r=await post('/login',{password:$('pw').value}); var d=await r.json();
+  if(d.ok){$('lg').style.display='none';$('pw').value='';$('er').textContent='';}
+  else $('er').textContent=d.error||'Kuch gadbad hui';
+};
+$('pw').onkeydown=function(e){if(e.key==='Enter')$('go').click();};
+bubble('p','Haan, bol na. Main sun rahi hoon.');
+fetch('/ping').then(function(r){if(r.status===401)showLogin();});
+</script>
+</body>
+</html>
